@@ -46,25 +46,25 @@ $$;
 
 ```c
 *codeblock = {
-	type = T_InlineCodeBlock,
-	source_text = "
-		DECLARE
-			x INT := 0;
-		BEGIN
-			delete from res_table;
-			FOR i IN 1..10 LOOP
-				IF i <= 5 THEN
-					RAISE NOTICE 'skip %', i;
-				ELSE
-					RAISE NOTICE 'insert %', i;
-					INSERT INTO res_table values(x+i);
-				END IF;
-			END LOOP;
-		END;
-	",
-	langOid = 13680,
-	langIsTrusted = true,
-	atomic = false
+    type = T_InlineCodeBlock,
+    source_text = "
+        DECLARE
+            x INT := 0;
+        BEGIN
+            delete from res_table;
+            FOR i IN 1..10 LOOP
+                IF i <= 5 THEN
+                    RAISE NOTICE 'skip %', i;
+                ELSE
+                    RAISE NOTICE 'insert %', i;
+                    INSERT INTO res_table values(x+i);
+                END IF;
+            END LOOP;
+        END;
+    ",
+    langOid = 13680,
+    langIsTrusted = true,
+    atomic = false
 }
 ```
 
@@ -119,8 +119,8 @@ plpgsql_compile_inline(char *proc_source)
 
     ```c
     func_cxt = AllocSetContextCreate(CurrentMemoryContext,
-    								 "PL/pgSQL inline code context",
-    								 ALLOCSET_DEFAULT_SIZES);
+                                     "PL/pgSQL inline code context",
+                                     ALLOCSET_DEFAULT_SIZES);
     plpgsql_compile_tmp_cxt = MemoryContextSwitchTo(func_cxt);
     ```
 
@@ -144,11 +144,11 @@ plpgsql_compile_inline(char *proc_source)
 
     ```c
     var = plpgsql_build_variable("found", 0,
-    							 plpgsql_build_datatype(BOOLOID,
-    													-1,
-    													InvalidOid,
-    													NULL),
-    							 true);
+                                 plpgsql_build_datatype(BOOLOID,
+                                                        -1,
+                                                        InvalidOid,
+                                                        NULL),
+                                 true);
     function->found_varno = var->dno;
     ```
 
@@ -157,7 +157,7 @@ plpgsql_compile_inline(char *proc_source)
     ```c
     parse_rc = plpgsql_yyparse();
     if (parse_rc != 0)
-    	elog(ERROR, "plpgsql parser returned %d", parse_rc);
+        elog(ERROR, "plpgsql parser returned %d", parse_rc);
     function->action = plpgsql_parse_result;
     ```
 
@@ -166,6 +166,8 @@ plpgsql_compile_inline(char *proc_source)
 当编译完成后，可以获得如下的命名空间 `ns_top` 和变量空间 `plpgsql_Datums`。
 
 ![image-20230404183030866](./assets/image-20230404183030866.png)
+
+其中 `lineno` 是从 `$$` 的位置开始算的。
 
 ## 执行
 
