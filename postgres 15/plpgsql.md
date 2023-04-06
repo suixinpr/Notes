@@ -27,13 +27,13 @@ DO $$
 DECLARE
     x INT := 0;
 BEGIN
-    delete from res_table;
+    DELETE FROM res_table;
     FOR i IN 1..10 LOOP
         IF i <= 5 THEN
             RAISE NOTICE 'skip %', i;
         ELSE
             RAISE NOTICE 'insert %', i;
-            INSERT INTO res_table values(x+i);
+            INSERT INTO res_table VALUES(x+i);
         END IF;
     END LOOP;
 END;
@@ -51,13 +51,13 @@ $$;
         DECLARE
             x INT := 0;
         BEGIN
-            delete from res_table;
+            DELETE FROM res_table;
             FOR i IN 1..10 LOOP
                 IF i <= 5 THEN
                     RAISE NOTICE 'skip %', i;
                 ELSE
                     RAISE NOTICE 'insert %', i;
-                    INSERT INTO res_table values(x+i);
+                    INSERT INTO res_table VALUES(x+i);
                 END IF;
             END LOOP;
         END;
@@ -99,7 +99,7 @@ plpgsql_compile_inline(char *proc_source)
     plpgsql_scanner_init(proc_source);
     ```
 
-2. 设置 error 时的报错输出信息。当 error 发生时会依次弹出 `error_context_stack` 内的回调函数，并输出额外的信息。
+2. 设置 error 时的报错输出信息。当 error 发生时会依次弹出 `error_context_stack` 内的回调函数，输出回调函数中的额外信息。
 
     ```c
     plerrcontext.callback = plpgsql_compile_error_callback;
@@ -124,7 +124,7 @@ plpgsql_compile_inline(char *proc_source)
     plpgsql_compile_tmp_cxt = MemoryContextSwitchTo(func_cxt);
     ```
 
-5. 初始化 `function` 的值。
+5. 初始化 `function` 内成员的值。
 
 6. 初始化命名空间 `ns_top` 和变量空间 `plpgsql_Datums`。
 
@@ -161,14 +161,144 @@ plpgsql_compile_inline(char *proc_source)
     function->action = plpgsql_parse_result;
     ```
 
-9. 清理环境。
+9. 将 `plpgsql_Datums` 中的变量拷贝至 `function->datums` 中，后面执行的时候使用的变量就引用的这里的。
+
+    ```c
+    plpgsql_finish_datums(function);
+    ```
+
+10. 完成操作，并清理环境。
 
 当编译完成后，可以获得如下的命名空间 `ns_top` 和变量空间 `plpgsql_Datums`。
 
-![image-20230404183030866](./assets/image-20230404183030866.png)
+![image-20230406142240596](./assets/image-20230406142240596.png)
 
 其中 `lineno` 是从 `$$` 的位置开始算的。
 
 ## 执行
 
-匿名块的执行在函数`plpgsql_exec_function()` 中。
+匿名块的执行在函数`plpgsql_exec_function()` 中，该函数的的声明如下：
+
+```c
+Datum
+plpgsql_exec_function(PLpgSQL_function *func, FunctionCallInfo fcinfo,
+                      EState *simple_eval_estate,
+                      ResourceOwner simple_eval_resowner,
+                      ResourceOwner procedure_resowner,
+                      bool atomic)
+```
+
+它的返回值为执行的数据结果。传入的参数中，`func` 是之前编译后的结果；`simple_eval_estate` 和 `simple_eval_resowner` 都是匿名块自己创造的，而不是使用 `shared_simple_eval_estate` 和 `shared_simple_eval_resowner`，后者在非匿名块的情况下使用。
+
+在 `plpgsql_exec_function()` 中做的事情主要包括如下方面：
+
+1. 设置 `estate`。
+
+    ```c
+    	plpgsql_estate_setup(&estate, func, (ReturnSetInfo *) fcinfo->resultinfo,
+    						 simple_eval_estate, simple_eval_resowner);
+    	estate.procedure_resowner = procedure_resowner;
+    	estate.atomic = atomic
+    ```
+
+2. 设置 error 时的报错输出信息。当 error 发生时会依次弹出 `error_context_stack` 内的回调函数，输出回调函数中的额外信息。
+
+    ```c
+    	plerrcontext.callback = plpgsql_exec_error_callback;
+    	plerrcontext.arg = &estate;
+    	plerrcontext.previous = error_context_stack;
+    	error_context_stack = &plerrcontext;
+    ```
+
+3. 为当前执行中的变量制作一个拷贝的副本。
+
+    ```c
+        copy_plpgsql_datums(&estate, func);
+    ```
+
+4. 初始化函数的参数，由于我们这里是匿名块，没有入参所以跳过。
+
+    ```c
+        for (i = 0; i < func->fn_nargs; i++)
+        {
+    		...
+        }
+    ```
+
+5. 设置 `FOUND` 变量
+
+    ```c
+        exec_set_found(&estate, false);
+    ```
+
+6. 执行顶层 block，`func->action` 中存储的是编译后的执行树。
+
+    ```c
+        rc = exec_toplevel_block(&estate, func->action);
+        if (rc != PLPGSQL_RC_RETURN)
+        {
+            estate.err_text = NULL;
+            ereport(ERROR,
+                    (errcode(ERRCODE_S_R_E_FUNCTION_EXECUTED_NO_RETURN_STATEMENT),
+                     errmsg("control reached end of function without RETURN")));
+        }
+    ```
+
+7. 处理返回值
+
+    ```c
+        fcinfo->isnull = estate.retisnull;
+    
+        if (estate.retisset)
+        {
+            ...
+        }
+        else if (!estate.retisnull)
+        {
+            ...
+        }
+        else
+        {
+            ...
+        }
+    ```
+
+8. 完成操作，并清理环境。
+
+第 6 步中 `exec_toplevel_block(&estate, func->action)` 在初始化好环境后便会开始执行最外层的块，如下所示：
+
+```c
+static int
+exec_toplevel_block(PLpgSQL_execstate *estate, PLpgSQL_stmt_block *block)
+{
+    int         rc;
+
+    estate->err_stmt = (PLpgSQL_stmt *) block;
+
+    /* Let the plugin know that we are about to execute this statement */
+    if (*plpgsql_plugin_ptr && (*plpgsql_plugin_ptr)->stmt_beg)
+        ((*plpgsql_plugin_ptr)->stmt_beg) (estate, (PLpgSQL_stmt *) block);
+
+    CHECK_FOR_INTERRUPTS();
+
+    rc = exec_stmt_block(estate, block);
+
+    /* Let the plugin know that we have finished executing this statement */
+    if (*plpgsql_plugin_ptr && (*plpgsql_plugin_ptr)->stmt_end)
+        ((*plpgsql_plugin_ptr)->stmt_end) (estate, (PLpgSQL_stmt *) block);
+
+    estate->err_stmt = NULL;
+
+    return rc;
+}
+```
+
+因为 `func->action` 指向的是一个 `PLPGSQL_STMT_BLOCK` 类型的块，所以调用 `exec_stmt_block` 开始执行匿名块。
+
+在 `PLPGSQL_STMT_BLOCK` 中记录了当前块中需要执行的语句，这些语句可以是一个“简单语句”，也可以为另外一个“块”。如下图所示：
+
+
+
+![image-20230406142523789](./assets/image-20230406142523789.png)
+
+代码中通过函数 `exec_stmts()` 去判断每个语句的类型，并调用相应的函数处理。
