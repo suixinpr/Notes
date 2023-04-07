@@ -195,19 +195,19 @@ plpgsql_exec_function(PLpgSQL_function *func, FunctionCallInfo fcinfo,
 1. 设置 `estate`。
 
     ```c
-    	plpgsql_estate_setup(&estate, func, (ReturnSetInfo *) fcinfo->resultinfo,
-    						 simple_eval_estate, simple_eval_resowner);
-    	estate.procedure_resowner = procedure_resowner;
-    	estate.atomic = atomic
+        plpgsql_estate_setup(&estate, func, (ReturnSetInfo *) fcinfo->resultinfo,
+                             simple_eval_estate, simple_eval_resowner);
+        estate.procedure_resowner = procedure_resowner;
+        estate.atomic = atomic
     ```
 
 2. 设置 error 时的报错输出信息。当 error 发生时会依次弹出 `error_context_stack` 内的回调函数，输出回调函数中的额外信息。
 
     ```c
-    	plerrcontext.callback = plpgsql_exec_error_callback;
-    	plerrcontext.arg = &estate;
-    	plerrcontext.previous = error_context_stack;
-    	error_context_stack = &plerrcontext;
+        plerrcontext.callback = plpgsql_exec_error_callback;
+        plerrcontext.arg = &estate;
+        plerrcontext.previous = error_context_stack;
+        error_context_stack = &plerrcontext;
     ```
 
 3. 为当前执行中的变量制作一个拷贝的副本。
@@ -221,7 +221,7 @@ plpgsql_exec_function(PLpgSQL_function *func, FunctionCallInfo fcinfo,
     ```c
         for (i = 0; i < func->fn_nargs; i++)
         {
-    		...
+            ...
         }
     ```
 
